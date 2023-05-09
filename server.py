@@ -1,6 +1,7 @@
 from flask import Flask, request, jsonify
 import json
 from flask_cors import CORS
+from setting import *
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
@@ -8,7 +9,6 @@ x = 0
 y = 0
 shoot = False
 start = False
-
 
 
 @app.route('/')
@@ -47,4 +47,4 @@ def start():
     return json.dumps({"x": x, "y": y, 'shoot': shoot, 'start': start})
 
 
-app.run(host="0.0.0.0")
+app.run(host="0.0.0.0", port=port)
