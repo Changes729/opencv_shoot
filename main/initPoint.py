@@ -4,6 +4,7 @@ import os
 import numpy as np
 import cv2
 import requests
+from enum import Enum
 
 ## ** Defines part ***************************************************#
 CURR_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -12,18 +13,33 @@ DEPTH_CHART = CURR_PATH + '/../test1.jpg'
 DEBUG_ENABLE = True
 NUMPY_EXPORT = False
 
-width = 960
-height = 480
-SCR_WIDTH = 960
-SCR_HEIGHT = 480
+
+class CAM(Enum):
+    FRONT_CAM = 0
+    LEFT_CAM = 1
+    RIGHT_CAM = 2
+
+    TOTAL_CAM = 1
+
+
+SCR_WIDTH = int(1920 / 2)
+SCR_HEIGHT = int(1080 / 2)
 url = 'http://127.0.0.1:6000/setpoint'
 
 ## ** Functions part *************************************************#
+def log_err(info):
+    print("[err]", info)
+
 # ** 这里需要模糊是考虑点太小无法成圈
 
 
 def gary_img(img):
-    return cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 5)
+    gary = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 5)
+
+    if (DEBUG_ENABLE):
+        cv2.imshow("gary", cv2.resize(gary, (SCR_WIDTH, SCR_HEIGHT)))
+
+    return gary
 
 
 def binarization(gary_img):
@@ -31,7 +47,13 @@ def binarization(gary_img):
     block_size = 21
     C = 10
     max_val = 255
-    return cv2.adaptiveThreshold(gary_img, max_val, adaptive_method, cv2.THRESH_BINARY, block_size, C)
+    bin = cv2.adaptiveThreshold(
+        gary_img, max_val, adaptive_method, cv2.THRESH_BINARY, block_size, C)
+
+    if (DEBUG_ENABLE):
+        cv2.imshow("bin", cv2.resize(bin, (SCR_WIDTH, SCR_HEIGHT)))
+
+    return bin
 
 # ** 这是计算多个轮廓中心的
 # ** 主要原理是通过 findContours 画出等高线轮廓；然后通过 moments 计算中心
@@ -63,6 +85,8 @@ def centroids(binary_img):
             center_x = int(M["m10"] / M["m00"])
             center_y = int(M["m01"] / M["m00"])
             centers.append([center_x, center_y])
+        else:
+            log_err("m00 is 0")
 
     return centers
 
@@ -104,46 +128,67 @@ def get_center_point(hull, img):
     return [dst_centers[0][0]/SCR_WIDTH, dst_centers[0][1]/SCR_HEIGHT]
 
 
+def show_hulls(img, points, hulls):
+    img_lookup = img.copy()
+    for point_center in points:
+        r = 2
+        color = (0, 0, 128)
+        cv2.circle(img_lookup, point_center, r,
+                   color, cv2.FILLED)
+    length = len(hulls)
+    for i in range(length):
+        cv2.line(img_lookup, tuple(hulls[i][0]), tuple(
+            hulls[(i+1) % length][0]), (0, 255, 0), 2)
+        cv2.putText(img_lookup, str(i), tuple(
+            hulls[i][0]), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
+
+    cv2.imshow("hull",  cv2.resize(img_lookup, (SCR_WIDTH, SCR_HEIGHT)))
+
+
 def main():
-    cap = cv2.VideoCapture(0)
+    # ** Init ********************************************************
+    cams = []
+    for i in range(CAM.TOTAL_CAM.value):
+        cams.append(cv2.VideoCapture(i))
+
+    # ** Loop ********************************************************
     while (True):
-        _, frame = cap.read()
-        centers_list = centroids(binarization(gary_img(frame)))
-        hull = cal_hull(centers_list)
+        for i in range(CAM.TOTAL_CAM.value):
+          err, frame = cams[i].read()
+            if (err != True):
+            log_err(err)
+            continue
 
-        if (DEBUG_ENABLE):
-            img_lookup = frame.copy()
-            for point_center in centers_list:
-                r = 2
-                color = (0, 0, 128)
-                cv2.circle(img_lookup, point_center, r,
-                           color, cv2.FILLED)
-            length = len(hull)
-            for i in range(length):
-                cv2.line(img_lookup, tuple(hull[i][0]), tuple(
-                    hull[(i+1) % length][0]), (0, 255, 0), 2)
-                cv2.putText(img_lookup, str(i), tuple(
-                    hull[i][0]), cv2.FONT_HERSHEY_COMPLEX, 1, (0, 0, 255), 1)
-            cv2.imshow("img", img_lookup)
+          centers_list = centroids(binarization(gary_img(frame)))
+            hull = []
+            if (len(centers_list) > 4):
+          hull = cal_hull(centers_list)
 
-        if (NUMPY_EXPORT):
-            np.save(NPY_FILE, hull)
-
-        if (len(hull) > 0):
+          if (len(hull) == 4):
             point = get_center_point(hull, frame)
             d = {'x': point[0], 'y': point[1], 'start': True}
-        else:
+          else:
+            log_err("hull is " + str(len(hull)) + "points")
             d = {'x': 0, 'y': 0, 'start': False}
 
-        try:
-            r = requests.post(url, data=d)
-        except:
+          try:
+            requests.post(url, data=d)
+          except:
+            log_err("send request to " + url + "failed")
             pass
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):  # 按q键退出
+          if (NUMPY_EXPORT):
+            np.save(NPY_FILE, hull)
+
+          if (DEBUG_ENABLE):
+            show_hulls(frame, centers_list, hull)
+
+          if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
-    cap.release()
+    # ** End ********************************************************
+    for i in range(CAM.TOTAL_CAM.value):
+        cams[i].release()
     cv2.destroyAllWindows()
 
 
