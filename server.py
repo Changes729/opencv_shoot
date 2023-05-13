@@ -27,7 +27,9 @@ def send_infos():
             shoot = [False, False]
     return json.dumps(json_file)
 
-
+#** IP: 192.168.199.167
+#** SSID: tingjian
+#** passwd: 13818611371
 @app.route('/shoot')
 def trigger_shoot():
     print(request.remote_addr)
