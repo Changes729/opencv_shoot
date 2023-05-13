@@ -8,10 +8,12 @@ import threading
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-shoot = False
+deviceIP = ["192.168.199.127", ""]
+shoot = [False, False]
 
 @app.route('/')
 def send_infos():
+    global shoot
     points = main.shoot_points
     json_file = {"totalIndex": 0, "infos": []}
     for i in range(len(points)):
@@ -20,23 +22,24 @@ def send_infos():
                 "index": json_file["totalIndex"],
                 "position": p,
                 "camera": i,
-                "shoot": False,
             })
             json_file["totalIndex"] += 1
+            shoot = [False, False]
     return json.dumps(json_file)
 
 
 @app.route('/shoot')
-def shoot():
+def trigger_shoot():
+    print(request.remote_addr)
+    for i in range(len(deviceIP)):
+        if(deviceIP[i] == request.remote_addr):
+            shoot[i] = True
     return json.dumps({})
 
 
-@app.route('/shoot', methods=["POST"])
-def set_point():
-    index = request.form.get('index')     # 获取 JSON 数据
-    shoot = request.form.get('shoot')
-    return "0"
-
+@app.route('/shoot_info')
+def shoot_info():
+    return json.dumps({"shoot": shoot})
 
 if __name__ == "__main__":
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)).start()
