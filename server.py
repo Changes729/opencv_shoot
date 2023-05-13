@@ -2,49 +2,42 @@ from flask import Flask, request, jsonify
 import json
 from flask_cors import CORS
 from setting import *
+import main.initPoint as main
+import threading
+
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
 
-x = 0
-y = 0
 shoot = False
-start = False
-
 
 @app.route('/')
-def hello_world():
-    global x, y, shoot, start
-    if shoot:
-        shoot = not shoot
-        return json.dumps({"x": x, "y": y, 'shoot': True, 'start': start})
-    if start:
-        start = not start
-        return json.dumps({"x": x, "y": y, 'shoot': shoot, 'start': True})
-    # print(x,y)
-    return json.dumps({"x": x, "y": y, 'shoot': shoot, 'start': start})
-
-
-@app.route('/setpoint', methods=["POST"])
-def set_point():
-    global x, y, start
-    x = request.form.get('x')     # 获取 JSON 数据
-    y = request.form.get('y')
-    start = request.form.get('start')
-    return "0"
+def send_infos():
+    points = main.shoot_points
+    json_file = {"totalIndex": 0, "infos": []}
+    for i in range(len(points)):
+        for p in points[i]:
+            json_file["infos"].append({
+                "index": json_file["totalIndex"],
+                "position": p,
+                "camera": i,
+                "shoot": False,
+            })
+            json_file["totalIndex"] += 1
+    return json.dumps(json_file)
 
 
 @app.route('/shoot')
 def shoot():
-    global shoot
-    shoot = True
-    return json.dumps({"x": x, "y": y, 'shoot': shoot})
+    return json.dumps({})
 
 
-@app.route('/start')
-def start():
-    global start
-    start = not start
-    return json.dumps({"x": x, "y": y, 'shoot': shoot, 'start': start})
+@app.route('/shoot', methods=["POST"])
+def set_point():
+    index = request.form.get('index')     # 获取 JSON 数据
+    shoot = request.form.get('shoot')
+    return "0"
 
 
-app.run(host="0.0.0.0", port=port)
+if __name__ == "__main__":
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)).start()
+    main.main()

@@ -4,6 +4,7 @@ import os
 import numpy as np
 import cv2
 import requests
+import math
 from enum import Enum
 
 ## ** Defines part ***************************************************#
@@ -24,31 +25,25 @@ class CAM(Enum):
 
 SCR_WIDTH = int(1920 / 2)
 SCR_HEIGHT = int(1080 / 2)
-url = 'http://127.0.0.1:6000/setpoint'
+
+shoot_points = [[0, 0]]
 
 ## ** Functions part *************************************************#
 def log_err(info):
     print("[err]", info)
 
 # ** 这里需要模糊是考虑点太小无法成圈
-
-
 def gary_img(img):
-    gary = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 5)
+    gary = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 31)
 
     if (DEBUG_ENABLE):
-        cv2.imshow("gary", cv2.resize(gary, (SCR_WIDTH, SCR_HEIGHT)))
+        cv2.imshow("media", cv2.resize(gary, (SCR_WIDTH, SCR_HEIGHT)))
 
     return gary
 
 
-def binarization(gary_img):
-    adaptive_method = cv2.ADAPTIVE_THRESH_GAUSSIAN_C
-    block_size = 21
-    C = 10
-    max_val = 255
-    bin = cv2.adaptiveThreshold(
-        gary_img, max_val, adaptive_method, cv2.THRESH_BINARY, block_size, C)
+def binarization(gary_img, revert = False):
+    _, bin = cv2.threshold(gary_img, 55, 255, cv2.THRESH_BINARY if not revert else cv2.THRESH_BINARY_INV)
 
     if (DEBUG_ENABLE):
         cv2.imshow("bin", cv2.resize(bin, (SCR_WIDTH, SCR_HEIGHT)))
@@ -71,8 +66,6 @@ def binarization(gary_img):
 # ** ———— RETR_TREE：会建立完整的父子关系
 # ** ———— CHAIN_APPROX_SIMPLE: 算法压缩
 # ** 这样 moments 获取到的是压缩过的向量数组
-
-
 def centroids(binary_img):
     contours, _ = cv2.findContours(
         binary_img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -94,38 +87,36 @@ def centroids(binary_img):
 def cal_hull(centers_points):
     return cv2.convexHull(np.array(centers_points))
 
-
+#** 如果凸包不是四点，就会出错，但这个错误应该在外部完成
 def get_center_point(hull, img):
-    # FIXME: 如果凸包不是四点的，就会出错。
     ret_source = hull[:4, 0, :]
     ret_destiny = np.array([[0, 0], [960, 0], [960, 480], [0, 480]])
+
+    min = 0
+    for i in range(1, len(ret_source)):
+        if np.linalg.norm(ret_source[i]) < np.linalg.norm(ret_source[min]):
+            min = i
+    ret_source = np.roll(ret_source, -min, axis=0)
 
     pts_o = np.float32(ret_source)
     pts_d = np.float32(ret_destiny)
     M = cv2.getPerspectiveTransform(pts_o, pts_d)
+
+    for p in ret_source:
+        gray = cv2.circle(img, p, 25, (255, 255, 255), -1)
     dst = cv2.warpPerspective(img, M, (SCR_WIDTH, SCR_HEIGHT))
+    gray = gary_img(dst)
+    centers_list = centroids(binarization(gray, True))
 
-    gray = cv2.cvtColor(dst, cv2.COLOR_BGR2GRAY)
-    centers_list = centroids(binarization(gray))
+    if (DEBUG_ENABLE):
+        cv2.imshow("gray", cv2.resize(gray, (SCR_WIDTH, SCR_HEIGHT)))
+        print(centers_list)
 
-    dst_centers = []
-    for center in centers_list:
-        center_x = center[0]
-        center_y = center[1]
-        if (center_x/SCR_WIDTH < 0.2 and center_y/SCR_HEIGHT < 0.2):
-            pass
-        elif (center_x/SCR_WIDTH > 0.98 and center_y/SCR_HEIGHT < 0.2):
-            pass
-        elif (center_x/SCR_WIDTH < 0.2 and center_y/SCR_HEIGHT > 0.98):
-            pass
-        elif (center_x/SCR_WIDTH > 0.98 and center_y/SCR_HEIGHT > 0.98):
-            pass
-        else:
-            dst_centers.append([center_x, center_y])
-        cv2.circle(dst, (center_x, center_y), 2, 128, -1)  # 绘制中心点
+        for center in centers_list:
+            cv2.circle(dst, center, 2, 128, -1)  # 绘制中心点
+        cv2.imshow('dst', dst)
 
-    cv2.imshow('dst', dst)
-    return [dst_centers[0][0]/SCR_WIDTH, dst_centers[0][1]/SCR_HEIGHT]
+    return centers_list
 
 
 def show_hulls(img, points, hulls):
@@ -154,36 +145,27 @@ def main():
     # ** Loop ********************************************************
     while (True):
         for i in range(CAM.TOTAL_CAM.value):
-          err, frame = cams[i].read()
+            err, frame = cams[i].read()
             if (err != True):
-            log_err(err)
-            continue
+                log_err(err)
+                continue
 
-          centers_list = centroids(binarization(gary_img(frame)))
+            centers_list = centroids(binarization(gary_img(frame)))
             hull = []
             if (len(centers_list) > 4):
-          hull = cal_hull(centers_list)
+                hull = cal_hull(centers_list)
 
-          if (len(hull) == 4):
-            point = get_center_point(hull, frame)
-            d = {'x': point[0], 'y': point[1], 'start': True}
-          else:
-            log_err("hull is " + str(len(hull)) + "points")
-            d = {'x': 0, 'y': 0, 'start': False}
+            if (len(hull) == 4):
+                global shoot_points
+                shoot_points[i] = get_center_point(hull, frame)
+                shoot_points[i] = (shoot_points[i] / np.array([[960, 480]])).tolist()
+            else:
+                log_err("hull is " + str(len(hull)) + "points")
 
-          try:
-            requests.post(url, data=d)
-          except:
-            log_err("send request to " + url + "failed")
-            pass
+            if (NUMPY_EXPORT):
+                np.save(NPY_FILE, hull)
 
-          if (NUMPY_EXPORT):
-            np.save(NPY_FILE, hull)
-
-          if (DEBUG_ENABLE):
-            show_hulls(frame, centers_list, hull)
-
-          if cv2.waitKey(1) & 0xFF == ord('q'):
+        if cv2.waitKey(1) & 0xFF == ord('q'):
             break
 
     # ** End ********************************************************
