@@ -13,15 +13,18 @@ SCR_WIDTH = int(1920 / 2)
 SCR_HEIGHT = int(1080 / 2)
 
 class CamScan():
+    shoot_points_px = [[0, 0]]
     shoot_points = [[0, 0]]
 
-    def __init__(self, CAM_COUNT, cam_index_list = None, DEBUG = False):
+    def __init__(self, CAM_COUNT, cam_index_list = None, DEBUG = False, hull_img = None, p_img = None):
         if(cam_index_list == None):
             cam_index_list = np.arange(CAM_COUNT)
         self.CAM_COUNT = CAM_COUNT
         self.cam_list = cam_index_list
         self.hull = []
         self.DEBUG = DEBUG
+        self.hull_img = hull_img
+        self.p_img = p_img
 
     ## ** Functions part *************************************************#
     def get_shoot_points(self):
@@ -29,7 +32,11 @@ class CamScan():
 
     # ** 这里需要模糊是考虑点太小无法成圈
     def gary_img(self, img):
-        gary = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), 31)
+        ksize = 0
+        if(ksize == 0):
+            gary = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            gary = cv2.medianBlur(cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), ksize)
 
         if (self.DEBUG):
             cv2.imshow("media", cv2.resize(gary, (SCR_WIDTH, SCR_HEIGHT)))
@@ -38,7 +45,8 @@ class CamScan():
 
 
     def binarization(self, gary_img, revert = False):
-        _, bin = cv2.threshold(gary_img, 55, 255, cv2.THRESH_BINARY if not revert else cv2.THRESH_BINARY_INV)
+        _, bin = cv2.threshold(gary_img, 55 if not revert else 200,
+                               255, cv2.THRESH_BINARY if not revert else cv2.THRESH_BINARY_INV)
 
         if (self.DEBUG):
             cv2.imshow("bin", cv2.resize(bin, (SCR_WIDTH, SCR_HEIGHT)))
@@ -99,11 +107,11 @@ class CamScan():
 
         dst = cv2.warpPerspective(img, M, (SCR_WIDTH, SCR_HEIGHT))
         gray = self.gary_img(dst)
-        centers_list = self.centroids(self.binarization(gray, True))
+        centers_list = self.centroids(self.binarization(gray))
 
         if (self.DEBUG):
             cv2.imshow("gray", cv2.resize(gray, (SCR_WIDTH, SCR_HEIGHT)))
-            print(centers_list)
+            log_info(centers_list)
 
             for center in centers_list:
                 cv2.circle(dst, center, 2, 128, -1)  # 绘制中心点
@@ -128,13 +136,32 @@ class CamScan():
 
         cv2.imshow("hull",  cv2.resize(img_lookup, (SCR_WIDTH, SCR_HEIGHT)))
 
+    #** 现在主要是根据距离0点距离进行匹配
+    def trace_points(self, old_points, curr_points):
+        temp = []
+        for p in curr_points:
+            temp.append([np.linalg.norm(p), p])
+
+        temp.sort()
+        ret = []
+        for p in temp:
+            ret.append(p[1])
+
+        log_info(ret)
+        return ret
+
     def init(self):
+
         for i in range(self.CAM_COUNT):
             cam = cv2.VideoCapture(self.cam_list[i])
             err, frame = cam.read()
             if (err != True):
                 log_err(err)
                 continue
+
+            #** Debug **#
+            if self.hull_img is not None:
+                frame = self.hull_img
 
             centers_list = self.centroids(self.binarization(self.gary_img(frame)))
             hull = []
@@ -171,10 +198,15 @@ class CamScan():
                     log_err(err)
                     continue
 
+                #** Debug **#
+                if self.p_img is not None:
+                    frame = self.p_img
+
                 centers_list = self.centroids(self.binarization(self.gary_img(frame)))
                 if (len(centers_list) > 0):
-                    self.shoot_points[i] = self.get_center_point(self.hull[i], frame)
-                    self.shoot_points[i] = (self.shoot_points[i] / np.array([[960, 480]])).tolist()
+                    new_points = self.get_center_point(self.hull[i], frame)
+                    self.shoot_points_px[i] = self.trace_points(self.shoot_points_px[i], new_points)
+                    self.shoot_points[i] = (self.shoot_points_px[i] / np.array([[960, 480]])).tolist()
 
             if cv2.waitKey(1) and (0xFF == ord('q')):
                 break
