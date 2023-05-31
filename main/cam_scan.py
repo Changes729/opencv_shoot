@@ -47,7 +47,7 @@ class CamScan():
     def binarization(self, gary_img, revert = False):
         _, bin = cv2.threshold(gary_img, 55 if not revert else 200,
                                255, cv2.THRESH_BINARY if not revert else cv2.THRESH_BINARY_INV)
-
+        cv2.dilate(bin, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (10, 10)))
         if (self.DEBUG):
             cv2.imshow("bin", cv2.resize(bin, (SCR_WIDTH, SCR_HEIGHT)))
 
@@ -105,6 +105,8 @@ class CamScan():
         pts_d = np.float32(ret_destiny)
         M = cv2.getPerspectiveTransform(pts_o, pts_d)
 
+        for p in ret_source:
+            img = cv2.circle(img, p, 40, (0, 0, 0), -1)
         dst = cv2.warpPerspective(img, M, (SCR_WIDTH, SCR_HEIGHT))
         gray = self.gary_img(dst)
         centers_list = self.centroids(self.binarization(gray))
@@ -196,6 +198,8 @@ class CamScan():
                 err, frame = cams[i].read()
                 if (err != True):
                     log_err(err)
+                    cams[i].release()
+                    cams[i] = cv2.VideoCapture(self.cam_list[i])
                     continue
 
                 #** Debug **#
@@ -203,10 +207,15 @@ class CamScan():
                     frame = self.p_img
 
                 centers_list = self.centroids(self.binarization(self.gary_img(frame)))
+
                 if (len(centers_list) > 0):
                     new_points = self.get_center_point(self.hull[i], frame)
                     self.shoot_points_px[i] = self.trace_points(self.shoot_points_px[i], new_points)
-                    self.shoot_points[i] = (self.shoot_points_px[i] / np.array([[960, 480]])).tolist()
+                    if(len(self.shoot_points_px[i]) > 0 and len(self.shoot_points_px[i][0]) == 2):
+                        self.shoot_points[i] = (self.shoot_points_px[i] / np.array([[960, 480]])).tolist()
+                    else:
+                        log_err("point size is not 2")
+                        self.shoot_points[i] = [0, 0]
 
             if cv2.waitKey(1) and (0xFF == ord('q')):
                 break

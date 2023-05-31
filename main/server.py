@@ -22,12 +22,13 @@ class server(object):
         json_file = {"totalIndex": 0, "infos": []}
         for i in range(len(points)):
             for p in points[i]:
-                json_file["infos"].append({
-                    "index": json_file["totalIndex"],
-                    "position": p,
-                    "camera": i,
-                })
-                json_file["totalIndex"] += 1
+                if(type(p) is not int and len(p) == 2):
+                    json_file["infos"].append({
+                        "index": json_file["totalIndex"],
+                        "position": p,
+                        "camera": i,
+                    })
+                    json_file["totalIndex"] += 1
         self.shoot = [False, False]
         return jsonify(json_file)
 
